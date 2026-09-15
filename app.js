@@ -162,6 +162,7 @@
       categoryId: data.categoryId,
       subcategoryId: data.subcategoryId || null,
       note: data.note,
+      settlesId: data.settlesId || null,
       createdAt: Date.now()
     };
     state.transactions.push(tx);
@@ -180,8 +181,32 @@
     tx.categoryId = data.categoryId;
     tx.subcategoryId = data.subcategoryId || null;
     tx.note = data.note;
+    tx.settlesId = data.settlesId || null;
     applyTransaction(tx);
     saveState();
+  }
+
+  /* ---------------------------------------------------------
+     Debt / receivable ledger (partial or full settlement)
+  --------------------------------------------------------- */
+  // targetTx is a 'borrowed' or 'lent' transaction. Returns how much of it
+  // is still unpaid, optionally excluding one settling transaction's own
+  // contribution (used while editing that settling transaction).
+  function getOutstanding(targetTx, excludeTxId) {
+    const settleType = targetTx.type === 'borrowed' ? 'repayment' : 'received';
+    let paid = 0;
+    state.transactions.forEach(function (t) {
+      if (t.type === settleType && t.settlesId === targetTx.id && t.id !== excludeTxId) paid += t.amount;
+    });
+    const remaining = targetTx.amount - paid;
+    return remaining < 0.005 ? 0 : remaining;
+  }
+
+  // ledgerType: 'borrowed' (debt) or 'lent' (receivables)
+  function getOpenLedger(ledgerType) {
+    return state.transactions
+      .filter(function (t) { return t.type === ledgerType && getOutstanding(t) > 0.004; })
+      .sort(function (a, b) { return b.date.localeCompare(a.date) || b.createdAt - a.createdAt; });
   }
 
   function deleteTransaction(id) {
@@ -361,12 +386,8 @@
   --------------------------------------------------------- */
   function renderStats() {
     const netWorth = state.accounts.reduce(function (s, a) { return s + a.balance; }, 0);
-    let borrowed = 0, repaid = 0;
-    state.transactions.forEach(function (t) {
-      if (t.type === 'borrowed') borrowed += t.amount;
-      if (t.type === 'repayment') repaid += t.amount;
-    });
-    const debt = Math.max(0, borrowed - repaid);
+    const debt = getOpenLedger('borrowed').reduce(function (s, t) { return s + getOutstanding(t); }, 0);
+    const receivable = getOpenLedger('lent').reduce(function (s, t) { return s + getOutstanding(t); }, 0);
 
     const range = computeRange(txFilter.preset, txFilter.customStart, txFilter.customEnd);
     let inflow = 0, outflow = 0;
@@ -378,8 +399,49 @@
 
     $('#statNetWorth').textContent = fmt(netWorth);
     $('#statDebt').textContent = fmt(debt);
+    $('#statReceivable').textContent = fmt(receivable);
     $('#statInflow').textContent = fmt(inflow);
     $('#statOutflow').textContent = fmt(outflow);
+  }
+
+  $('#statDebtBtn').addEventListener('click', function () { openLedgerModal('borrowed'); });
+  $('#statReceivableBtn').addEventListener('click', function () { openLedgerModal('lent'); });
+
+  function openLedgerModal(ledgerType) {
+    const items = getOpenLedger(ledgerType);
+    const title = ledgerType === 'borrowed' ? 'Debt' : 'Receivables';
+    if (items.length === 0) {
+      openModal(title, '<p style="font-size:13.5px;color:var(--text-muted);text-align:center;padding:16px 0;">Nothing outstanding here.</p>', null);
+      return;
+    }
+    const html = '<div class="ledger-list">' + items.map(function (t) {
+      const remaining = getOutstanding(t);
+      return '' +
+        '<div class="ledger-item" data-id="' + t.id + '">' +
+          '<div class="ledger-info">' +
+            '<div class="ledger-note">' + escapeHtml(t.note || TYPE_META[t.type].label) + '</div>' +
+            '<div class="ledger-meta">' + formatDateHuman(t.date) + ' · ' + escapeHtml(categoryLabel(t)) + '</div>' +
+          '</div>' +
+          '<button type="button" class="ledger-settle-btn" data-id="' + t.id + '">' +
+            '<span class="ledger-remaining">' + fmt(remaining) + '</span><span class="ledger-slash">/</span><span class="ledger-original">' + fmt(t.amount) + '</span>' +
+          '</button>' +
+        '</div>';
+    }).join('') + '</div>';
+    openModal(title, html, function (root) {
+      Array.prototype.forEach.call(root.querySelectorAll('.ledger-settle-btn'), function (btn) {
+        btn.addEventListener('click', function () {
+          const tx = items.find(function (t) { return t.id === btn.getAttribute('data-id'); });
+          closeModal();
+          openTransactionModal(null, {
+            type: ledgerType === 'borrowed' ? 'repayment' : 'received',
+            settlesId: tx.id,
+            amount: getOutstanding(tx),
+            categoryId: tx.categoryId,
+            subcategoryId: tx.subcategoryId
+          });
+        });
+      });
+    });
   }
 
   /* ---------------------------------------------------------
@@ -441,6 +503,58 @@
     seeMoreBtn.hidden = filtered.length <= txLimit;
   }
   $('#txSeeMoreBtn').addEventListener('click', function () { txLimit += 20; renderTransactions(); });
+
+  $('#txSearchBtn').addEventListener('click', openSearchModal);
+
+  function openSearchModal() {
+    const body = '' +
+      '<input type="text" class="text-input" id="txSearchInput" placeholder="Search notes or categories" autocomplete="off">' +
+      '<div id="txSearchResults" class="tx-list" style="margin-top:4px;"></div>';
+    openModal('Search transactions', body, function (root) {
+      const input = root.querySelector('#txSearchInput');
+      const resultsEl = root.querySelector('#txSearchResults');
+
+      function renderResults(query) {
+        const q = query.trim().toLowerCase();
+        if (!q) { resultsEl.innerHTML = ''; return; }
+        const matches = state.transactions
+          .filter(function (t) {
+            return (t.note || '').toLowerCase().indexOf(q) > -1 || categoryLabel(t).toLowerCase().indexOf(q) > -1;
+          })
+          .sort(function (a, b) { return b.date.localeCompare(a.date) || b.createdAt - a.createdAt; })
+          .slice(0, 30);
+
+        if (matches.length === 0) {
+          resultsEl.innerHTML = '<p style="font-size:13px;color:var(--text-muted);text-align:center;padding:18px 0;">No matches</p>';
+          return;
+        }
+        resultsEl.innerHTML = matches.map(function (t) {
+          const meta = TYPE_META[t.type];
+          const icon = meta.direction === 'in' ? ICON_IN : ICON_OUT;
+          const sign = meta.direction === 'in' ? '+' : '-';
+          return '' +
+            '<div class="tx-item type-' + t.type + '" data-id="' + t.id + '">' +
+              '<div class="tx-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + icon + '</svg></div>' +
+              '<div class="tx-body">' +
+                '<div class="tx-category">' + escapeHtml(categoryLabel(t)) + '</div>' +
+                '<div class="tx-note">' + escapeHtml(t.note || meta.label) + ' · ' + formatDateHuman(t.date) + '</div>' +
+              '</div>' +
+              '<div class="tx-amount">' + sign + fmt(t.amount) + '</div>' +
+            '</div>';
+        }).join('');
+        Array.prototype.forEach.call(resultsEl.querySelectorAll('.tx-item'), function (el) {
+          el.addEventListener('click', function () {
+            const tx = state.transactions.find(function (t) { return t.id === el.getAttribute('data-id'); });
+            closeModal();
+            if (tx) openTransactionModal(tx);
+          });
+        });
+      }
+
+      input.addEventListener('input', function () { renderResults(input.value); });
+      setTimeout(function () { input.focus(); }, 60);
+    });
+  }
 
   $('#txFilterBtn').addEventListener('click', function () {
     openDateFilterModal('Filter transactions', txFilter, function (preset, cs, ce) {
@@ -511,18 +625,33 @@
     }).join('');
   }
 
-  function openTransactionModal(existingTx) {
+  function buildSettleOptionsHtml(settleLedgerType, selectedId, excludeTxId) {
+    const open = getOpenLedger(settleLedgerType).slice();
+    if (selectedId && !open.some(function (t) { return t.id === selectedId; })) {
+      const already = state.transactions.find(function (t) { return t.id === selectedId; });
+      if (already) open.unshift(already);
+    }
+    if (open.length === 0) return { html: '<option value="">Nothing outstanding</option>', hasOptions: false };
+    const html = open.map(function (t) {
+      const remaining = getOutstanding(t, excludeTxId);
+      return '<option value="' + t.id + '"' + (t.id === selectedId ? ' selected' : '') + '>' +
+        escapeHtml(t.note || TYPE_META[t.type].label) + ' — ' + fmt(remaining) + ' left</option>';
+    }).join('');
+    return { html: html, hasOptions: true };
+  }
+
+  function openTransactionModal(existingTx, presetInitial) {
     if (state.accounts.length === 0) {
       showToast('Add an account first');
       openAccountModal(null);
       return;
     }
     const isEdit = !!existingTx;
-    const initial = existingTx || {
+    const initial = existingTx || Object.assign({
       amount: '', type: 'expense', date: todayISO(),
       accountId: state.accounts[0].id, categoryId: state.categories[0].id,
-      subcategoryId: null, note: ''
-    };
+      subcategoryId: null, note: '', settlesId: null
+    }, presetInitial || {});
 
     const body = '' +
       '<div>' +
@@ -544,6 +673,10 @@
       '<div>' +
         '<label class="field-label">Account</label>' +
         '<select class="select-input" id="txAccountSelect">' + accountOptionsHtml(initial.accountId) + '</select>' +
+      '</div>' +
+      '<div id="txSettleFieldWrap" hidden>' +
+        '<label class="field-label" id="txSettleLabel">Settling</label>' +
+        '<select class="select-input" id="txSettleSelect"></select>' +
       '</div>' +
       '<div class="field-with-add">' +
         '<div style="flex:1"><label class="field-label">Category</label><select class="select-input" id="txCategorySelect">' + categoryOptionsHtml(initial.categoryId) + '</select></div>' +
@@ -580,10 +713,25 @@
       }
       refreshSubcategories();
 
+      function refreshSettleField() {
+        const wrap = root.querySelector('#txSettleFieldWrap');
+        if (selectedType === 'repayment' || selectedType === 'received') {
+          wrap.hidden = false;
+          const ledgerType = selectedType === 'repayment' ? 'borrowed' : 'lent';
+          root.querySelector('#txSettleLabel').textContent = selectedType === 'repayment' ? 'Paying off' : 'Receiving for';
+          const result = buildSettleOptionsHtml(ledgerType, initial.settlesId, isEdit ? existingTx.id : null);
+          root.querySelector('#txSettleSelect').innerHTML = result.html;
+        } else {
+          wrap.hidden = true;
+        }
+      }
+      refreshSettleField();
+
       Array.prototype.forEach.call(root.querySelectorAll('.type-chip'), function (chip) {
         chip.addEventListener('click', function () {
           selectedType = chip.getAttribute('data-type');
           Array.prototype.forEach.call(root.querySelectorAll('.type-chip'), function (c) { c.classList.toggle('is-active', c === chip); });
+          refreshSettleField();
         });
       });
 
@@ -653,7 +801,16 @@
         if (!note) { showToast('Add a note'); return; }
         if (!categoryId) { showToast('Choose a category'); return; }
 
-        const data = { amount: amount, type: selectedType, date: date, accountId: accountId, categoryId: categoryId, subcategoryId: subcategoryId, note: note };
+        let settlesId = null;
+        if (selectedType === 'repayment' || selectedType === 'received') {
+          settlesId = root.querySelector('#txSettleSelect').value;
+          if (!settlesId) { showToast('Choose what this settles'); return; }
+          const target = state.transactions.find(function (t) { return t.id === settlesId; });
+          const remaining = getOutstanding(target, isEdit ? existingTx.id : null);
+          if (amount > remaining + 0.005) { showToast('That is more than the ' + fmt(remaining) + ' still owed'); return; }
+        }
+
+        const data = { amount: amount, type: selectedType, date: date, accountId: accountId, categoryId: categoryId, subcategoryId: subcategoryId, note: note, settlesId: settlesId };
         if (isEdit) updateTransaction(existingTx.id, data);
         else addTransaction(data);
 

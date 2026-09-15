@@ -20,10 +20,7 @@
 
   <!-- Header -->
   <header class="app-header">
-    <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9 8h4.5a2 2 0 0 1 0 4H10a2 2 0 0 0 0 4h5"></path><path d="M12 6v2M12 16v2"></path></svg>
-      <span>WerMny</span>
-    </div>
+    <span class="brand-text">WerMny</span>
     <button id="currencyBtn" class="currency-btn" type="button" aria-haspopup="dialog">
       <span id="currencyBtnLabel">₱ PHP</span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M6 9l6 6 6-6"></path></svg>
@@ -35,15 +32,19 @@
 
     <!-- TRANSACTIONS TAB -->
     <section id="view-transactions" class="tab-view is-active">
+      <div class="stat-card stat-networth-full">
+        <span class="stat-label">Net worth</span>
+        <span class="stat-value" id="statNetWorth">₱0.00</span>
+      </div>
       <div class="stats-grid">
-        <div class="stat-card stat-networth">
-          <span class="stat-label">Net worth</span>
-          <span class="stat-value" id="statNetWorth">₱0.00</span>
-        </div>
-        <div class="stat-card stat-debt">
+        <button type="button" class="stat-card stat-receivable" id="statReceivableBtn">
+          <span class="stat-label">Receivables</span>
+          <span class="stat-value" id="statReceivable">₱0.00</span>
+        </button>
+        <button type="button" class="stat-card stat-debt" id="statDebtBtn">
           <span class="stat-label">Debt</span>
           <span class="stat-value" id="statDebt">₱0.00</span>
-        </div>
+        </button>
         <div class="stat-card stat-inflow">
           <span class="stat-label">Inflow</span>
           <span class="stat-value" id="statInflow">₱0.00</span>
@@ -56,10 +57,15 @@
 
       <div class="section-toolbar">
         <h1 class="section-title">Transactions</h1>
-        <button id="txFilterBtn" class="filter-btn" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>
-          <span id="txFilterLabel">This month</span>
-        </button>
+        <div class="toolbar-actions">
+          <button id="txSearchBtn" class="filter-btn icon-only" type="button" aria-label="Search transactions">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+          </button>
+          <button id="txFilterBtn" class="filter-btn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>
+            <span id="txFilterLabel">This month</span>
+          </button>
+        </div>
       </div>
 
       <div id="txList" class="tx-list"></div>

@@ -39,6 +39,7 @@
 }
 
 *{box-sizing:border-box;}
+[hidden]{display:none !important;}
 html,body{height:100%;}
 body{
   margin:0;
@@ -73,15 +74,11 @@ svg{display:block;flex-shrink:0;}
   padding:calc(env(safe-area-inset-top) + 16px) 20px 14px;
   background:var(--bg);
 }
-.brand{
-  display:flex;
-  align-items:center;
-  gap:8px;
+.brand-text{
   font-weight:700;
   font-size:19px;
   color:var(--sage-dark);
 }
-.brand-mark{width:24px;height:24px;color:var(--sage-dark);}
 .currency-btn{
   display:flex;
   align-items:center;
@@ -118,17 +115,23 @@ svg{display:block;flex-shrink:0;}
   display:flex;
   flex-direction:column;
   gap:6px;
+  width:100%;
+  text-align:left;
+  font:inherit;
 }
 .stat-label{font-size:12px;font-weight:500;color:var(--text-muted);}
 .stat-value{font-size:17px;font-weight:700;letter-spacing:-0.2px;}
-.stat-networth{background:var(--sage-tint);}
-.stat-networth .stat-value{color:var(--sage-dark);}
+.stat-networth-full{background:var(--surface);border:1px solid var(--border);margin-bottom:10px;}
+.stat-networth-full .stat-value{color:var(--text);font-size:22px;}
+.stat-receivable{background:var(--sky-tint);}
+.stat-receivable .stat-value{color:var(--sky-dark);}
 .stat-debt{background:var(--lavender-tint);}
 .stat-debt .stat-value{color:var(--lavender-dark);}
-.stat-inflow{background:var(--sky-tint);}
-.stat-inflow .stat-value{color:var(--sky-dark);}
+.stat-inflow{background:var(--sage-tint);}
+.stat-inflow .stat-value{color:var(--sage-dark);}
 .stat-outflow{background:var(--coral-tint);}
 .stat-outflow .stat-value{color:var(--coral-dark);}
+.stat-receivable:active, .stat-debt:active{transform:scale(.98);}
 
 /* Section toolbar */
 .section-toolbar{
@@ -153,6 +156,33 @@ svg{display:block;flex-shrink:0;}
   box-shadow:var(--shadow-card);
 }
 .filter-btn svg{color:var(--sage-dark);}
+.toolbar-actions{display:flex;align-items:center;gap:8px;}
+.filter-btn.icon-only{padding:9px;}
+
+/* Ledger (debt / receivables) modal */
+.ledger-list{display:flex;flex-direction:column;gap:10px;}
+.ledger-item{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--surface-alt);
+  border-radius:var(--radius-s);
+  padding:12px 14px;
+}
+.ledger-info{min-width:0;}
+.ledger-note{font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ledger-meta{font-size:12px;color:var(--text-muted);margin-top:2px;}
+.ledger-remaining{font-weight:700;color:var(--text);}
+.ledger-settle-btn{
+  flex-shrink:0;
+  padding:9px 14px;
+  border-radius:999px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  color:var(--text);
+  font-size:12.5px;font-weight:600;
+}
+.ledger-settle-btn:active{background:var(--surface-alt);}
+.ledger-slash{color:var(--text-faint);font-weight:500;margin:0 1px;}
+.ledger-original{color:var(--text-muted);font-weight:500;}
 
 /* Transaction list */
 .tx-list{display:flex;flex-direction:column;gap:10px;}
@@ -426,6 +456,7 @@ svg{display:block;flex-shrink:0;}
   z-index:50;
   backdrop-filter:blur(1px);
 }
+.overlay[hidden]{display:none;}
 .modal{
   margin:auto 16px;
   width:calc(100% - 32px);
