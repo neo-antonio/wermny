@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WerMny</title>
+<meta name="description" content="A gentle way to track where your money comes and goes.">
+<meta name="theme-color" content="#F7F2EA">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9 8h4.5a2 2 0 0 1 0 4H10a2 2 0 0 0 0 4h5"></path><path d="M12 6v2M12 16v2"></path></svg>
+      <span>WerMny</span>
+    </div>
+    <button id="currencyBtn" class="currency-btn" type="button" aria-haspopup="dialog">
+      <span id="currencyBtnLabel">₱ PHP</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M6 9l6 6 6-6"></path></svg>
+    </button>
+  </header>
+
+  <!-- Main content -->
+  <main class="app-main">
+
+    <!-- TRANSACTIONS TAB -->
+    <section id="view-transactions" class="tab-view is-active">
+      <div class="stats-grid">
+        <div class="stat-card stat-networth">
+          <span class="stat-label">Net worth</span>
+          <span class="stat-value" id="statNetWorth">₱0.00</span>
+        </div>
+        <div class="stat-card stat-debt">
+          <span class="stat-label">Debt</span>
+          <span class="stat-value" id="statDebt">₱0.00</span>
+        </div>
+        <div class="stat-card stat-inflow">
+          <span class="stat-label">Inflow</span>
+          <span class="stat-value" id="statInflow">₱0.00</span>
+        </div>
+        <div class="stat-card stat-outflow">
+          <span class="stat-label">Outflow</span>
+          <span class="stat-value" id="statOutflow">₱0.00</span>
+        </div>
+      </div>
+
+      <div class="section-toolbar">
+        <h1 class="section-title">Transactions</h1>
+        <button id="txFilterBtn" class="filter-btn" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>
+          <span id="txFilterLabel">This month</span>
+        </button>
+      </div>
+
+      <div id="txList" class="tx-list"></div>
+
+      <div id="txEmpty" class="empty-state" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"></rect><path d="M3 10h18M8 4v4"></path></svg>
+        <p>No transactions in this range yet.</p>
+      </div>
+
+      <button id="txSeeMoreBtn" class="see-more-btn" type="button" hidden>See more</button>
+    </section>
+
+    <!-- ACCOUNTS TAB -->
+    <section id="view-accounts" class="tab-view">
+      <div class="section-toolbar">
+        <h1 class="section-title">Accounts</h1>
+        <span class="section-sub" id="accountsTotal">₱0.00 total</span>
+      </div>
+
+      <div id="accountsList" class="accounts-list"></div>
+
+      <div id="accountsEmpty" class="empty-state" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="14" rx="2"></rect><path d="M2 10h20"></path></svg>
+        <p>Add an account to start tracking balances.</p>
+      </div>
+    </section>
+
+    <!-- MORE TAB -->
+    <section id="view-more" class="tab-view">
+      <div class="more-subnav" id="moreSubnav">
+        <button class="more-subnav-btn is-active" data-sub="profile" type="button">Profile</button>
+        <button class="more-subnav-btn" data-sub="categories" type="button">Categories</button>
+        <button class="more-subnav-btn" data-sub="statistics" type="button">Statistics</button>
+        <button class="more-subnav-btn" data-sub="settings" type="button">Settings</button>
+      </div>
+
+      <!-- Profile -->
+      <div id="sub-profile" class="sub-view is-active">
+        <div class="profile-card">
+          <div class="profile-avatar" id="profileAvatar">W</div>
+          <div class="profile-field-group">
+            <label class="field-label" for="profileNameInput">Display name</label>
+            <input id="profileNameInput" class="text-input" type="text" placeholder="Your name" maxlength="40">
+          </div>
+          <p class="profile-meta" id="profileMemberSince">Member since -</p>
+        </div>
+      </div>
+
+      <!-- Categories -->
+      <div id="sub-categories" class="sub-view">
+        <div class="section-toolbar">
+          <h2 class="section-title">Categories</h2>
+          <button id="addCategoryBtn" class="filter-btn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M12 5v14M5 12h14"></path></svg>
+            <span>Category</span>
+          </button>
+        </div>
+        <div id="categoriesList" class="categories-list"></div>
+      </div>
+
+      <!-- Statistics -->
+      <div id="sub-statistics" class="sub-view">
+        <div class="section-toolbar">
+          <h2 class="section-title">Statistics</h2>
+          <button id="statsFilterBtn" class="filter-btn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>
+            <span id="statsFilterLabel">This month</span>
+          </button>
+        </div>
+
+        <div class="stats-type-toggle" id="statsTypeToggle">
+          <button class="toggle-pill is-active" data-type="expense" type="button">Expense</button>
+          <button class="toggle-pill" data-type="income" type="button">Income</button>
+        </div>
+
+        <div class="chart-card">
+          <div id="pieChartWrap" class="pie-chart-wrap"></div>
+          <div id="statsEmpty" class="empty-state" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg>
+            <p>Nothing to show for this range.</p>
+          </div>
+          <div id="pieLegend" class="pie-legend"></div>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div id="sub-settings" class="sub-view">
+        <h2 class="section-title">Settings</h2>
+        <div class="settings-list">
+          <button class="settings-row" id="settingsCurrencyRow" type="button">
+            <span>Default currency</span>
+            <span class="settings-row-value" id="settingsCurrencyValue">PHP</span>
+          </button>
+          <button class="settings-row settings-row-danger" id="resetDataBtn" type="button">
+            <span>Reset all data</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Floating action button -->
+  <button id="fabBtn" class="fab" type="button" aria-label="Add">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+  </button>
+
+  <!-- Bottom navigation -->
+  <nav class="bottom-nav">
+    <button class="nav-btn is-active" data-tab="transactions" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"></path></svg>
+      <span>Transactions</span>
+    </button>
+    <button class="nav-btn" data-tab="accounts" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="14" rx="2"></rect><path d="M2 10h20M15 15h3"></path></svg>
+      <span>Accounts</span>
+    </button>
+    <button class="nav-btn" data-tab="more" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"></path></svg>
+      <span>More</span>
+    </button>
+  </nav>
+
+</div>
+
+<!-- Centered modal overlay -->
+<div id="modalOverlay" class="overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="modalTitle" class="modal-title"></h2>
+      <button id="modalCloseBtn" class="icon-btn" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
+    </div>
+    <div id="modalBody" class="modal-body"></div>
+  </div>
+</div>
+
+<!-- Bottom sheet overlay -->
+<div id="sheetOverlay" class="overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true">
+    <div class="sheet-handle"></div>
+    <h2 id="sheetTitle" class="sheet-title"></h2>
+    <div id="sheetBody" class="sheet-body"></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
