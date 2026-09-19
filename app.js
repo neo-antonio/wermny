@@ -37,29 +37,55 @@
   const ICON_IN = '<path d="M17 7L7 17"></path><path d="M7 9v8h8"></path>';
   const ICON_OUT = '<path d="M7 17L17 7"></path><path d="M9 7h8v8"></path>';
 
+  const PALETTES = [
+    { key: 'lavender', name: 'Light Purple', bg: '#F3EEFA', accent: '#B9AEE0', accentDark: '#8A7BC4', accentTint: '#ECE8F7' },
+    { key: 'sage',      name: 'Sage Green',   bg: '#F7F2EA', accent: '#8FBBA0', accentDark: '#5F9A7B', accentTint: '#E1EFE6' },
+    { key: 'blush',     name: 'Blush Pink',   bg: '#FBF0F1', accent: '#EFA6AE', accentDark: '#C96E7A', accentTint: '#FBE6E9' },
+    { key: 'sky',       name: 'Sky Blue',     bg: '#EFF6FB', accent: '#9BC4E2', accentDark: '#5D93BE', accentTint: '#E4EFF7' },
+    { key: 'peach',     name: 'Peach',        bg: '#FBF3EA', accent: '#EFC98A', accentDark: '#C99B4A', accentTint: '#FBF0DE' },
+    { key: 'mint',      name: 'Mint',         bg: '#EEF8F3', accent: '#8FD9B6', accentDark: '#4F9A72', accentTint: '#DFF3E9' }
+  ];
+
   /* ---------------------------------------------------------
      State
   --------------------------------------------------------- */
   function defaultState() {
     return {
       accounts: [
-        { id: uid('acc'), name: 'Cash', balance: 0 }
+        { id: uid('acc'), name: 'Cash', balance: 0, createdAt: Date.now() }
       ],
       transactions: [],
       categories: [
-        { id: uid('cat'), name: 'Food', subcategories: [] },
-        { id: uid('cat'), name: 'Transportation', subcategories: [] },
-        { id: uid('cat'), name: 'Shopping', subcategories: [] }
+        { id: uid('cat'), name: 'Food', icon: null, subcategories: [] },
+        { id: uid('cat'), name: 'Transportation', icon: null, subcategories: [] },
+        { id: uid('cat'), name: 'Shopping', icon: null, subcategories: [] }
       ],
       settings: {
         currency: 'PHP',
         profileName: '',
-        memberSince: todayISO()
+        profilePhoto: null,
+        memberSince: todayISO(),
+        paletteKey: 'lavender',
+        accountSortMode: 'custom',
+        statsExcludedCategoryIds: []
       }
     };
   }
 
   let state = loadState();
+
+  function migrateState(s) {
+    s.accounts.forEach(function (a, i) { if (!a.createdAt) a.createdAt = Date.now() - (s.accounts.length - i) * 1000; });
+    s.categories.forEach(function (c) {
+      if (c.icon === undefined) c.icon = null;
+      (c.subcategories || []).forEach(function (sub) { if (sub.icon === undefined) sub.icon = null; });
+    });
+    if (s.settings.profilePhoto === undefined) s.settings.profilePhoto = null;
+    if (!s.settings.paletteKey) s.settings.paletteKey = 'lavender';
+    if (!s.settings.accountSortMode) s.settings.accountSortMode = 'custom';
+    if (!s.settings.statsExcludedCategoryIds) s.settings.statsExcludedCategoryIds = [];
+    return s;
+  }
 
   function loadState() {
     try {
@@ -67,7 +93,7 @@
       if (!raw) return defaultState();
       const parsed = JSON.parse(raw);
       if (!parsed.accounts || !parsed.categories) return defaultState();
-      return parsed;
+      return migrateState(parsed);
     } catch (e) {
       return defaultState();
     }
@@ -133,6 +159,18 @@
     if (!cat) return 'Uncategorized';
     const sub = tx.subcategoryId ? getSubcategory(cat, tx.subcategoryId) : null;
     return sub ? cat.name + ' · ' + sub.name : cat.name;
+  }
+  function txIconHtml(t) {
+    const meta = TYPE_META[t.type];
+    const arrow = meta.direction === 'in' ? ICON_IN : ICON_OUT;
+    const cat = getCategory(t.categoryId);
+    const sub = cat && t.subcategoryId ? getSubcategory(cat, t.subcategoryId) : null;
+    const photo = (sub && sub.icon) || (cat && cat.icon) || null;
+    if (photo) {
+      return '<img class="tx-icon-img" src="' + escapeHtml(photo) + '" alt="">' +
+        '<span class="tx-icon-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">' + arrow + '</svg></span>';
+    }
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + arrow + '</svg>';
   }
 
   /* ---------------------------------------------------------
@@ -339,6 +377,99 @@
   }
 
   /* ---------------------------------------------------------
+     Generic image picker (used by profile / category / subcategory)
+  --------------------------------------------------------- */
+  const globalImageFileInput = $('#globalImageFileInput');
+
+  function openImagePicker(opts) {
+    const body = '' +
+      '<div class="photo-picker-preview" id="photoPreview">' +
+        (opts.currentUrl ? '' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.5"></circle><path d="M21 16l-5-5-4 4-2-2-5 5"></path></svg>') +
+      '</div>' +
+      '<div class="photo-picker-actions">' +
+        '<button type="button" class="btn btn-secondary" id="photoChooseBtn">Choose from gallery or files</button>' +
+        '<div class="photo-picker-divider">or</div>' +
+        '<div class="field-with-add">' +
+          '<input type="text" class="text-input" id="photoUrlInput" placeholder="Paste an image address">' +
+          '<button type="button" class="small-icon-btn" id="photoUrlSaveBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg></button>' +
+        '</div>' +
+        (opts.currentUrl ? '<button type="button" class="photo-picker-remove" id="photoRemoveBtn">Remove photo</button>' : '') +
+      '</div>';
+
+    openModal(opts.title || 'Photo', body, function (root) {
+      const preview = root.querySelector('#photoPreview');
+      if (opts.currentUrl) preview.style.backgroundImage = 'url(' + JSON.stringify(opts.currentUrl) + ')';
+
+      root.querySelector('#photoChooseBtn').addEventListener('click', function () {
+        globalImageFileInput.onchange = function () {
+          const file = globalImageFileInput.files && globalImageFileInput.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = function () {
+            closeModal();
+            opts.onSelect(reader.result);
+          };
+          reader.readAsDataURL(file);
+          globalImageFileInput.value = '';
+        };
+        globalImageFileInput.click();
+      });
+
+      root.querySelector('#photoUrlSaveBtn').addEventListener('click', function () {
+        const url = root.querySelector('#photoUrlInput').value.trim();
+        if (!url) { showToast('Paste an image address first'); return; }
+        closeModal();
+        opts.onSelect(url);
+      });
+
+      if (opts.currentUrl) {
+        root.querySelector('#photoRemoveBtn').addEventListener('click', function () {
+          closeModal();
+          if (opts.onRemove) opts.onRemove();
+        });
+      }
+    });
+  }
+
+  /* ---------------------------------------------------------
+     Color palette
+  --------------------------------------------------------- */
+  function applyPalette(key) {
+    const palette = PALETTES.find(function (p) { return p.key === key; }) || PALETTES[0];
+    const root = document.documentElement.style;
+    root.setProperty('--bg', palette.bg);
+    root.setProperty('--accent', palette.accent);
+    root.setProperty('--accent-dark', palette.accentDark);
+    root.setProperty('--accent-tint', palette.accentTint);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', palette.bg);
+  }
+
+  function openPaletteModal() {
+    const html = '<div class="palette-swatch-grid">' + PALETTES.map(function (p) {
+      const selected = p.key === state.settings.paletteKey;
+      return '' +
+        '<button type="button" class="palette-swatch-row' + (selected ? ' is-selected' : '') + '" data-key="' + p.key + '">' +
+          '<span class="palette-swatch-circle" style="background:' + p.accent + '"></span>' +
+          '<span class="palette-swatch-name">' + escapeHtml(p.name) + '</span>' +
+          (selected ? '<svg class="palette-swatch-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>' : '') +
+        '</button>';
+    }).join('') + '</div>';
+    openModal('Color palette', html, function (root) {
+      Array.prototype.forEach.call(root.querySelectorAll('.palette-swatch-row'), function (btn) {
+        btn.addEventListener('click', function () {
+          state.settings.paletteKey = btn.getAttribute('data-key');
+          saveState();
+          applyPalette(state.settings.paletteKey);
+          closeModal();
+          renderSettings();
+        });
+      });
+    });
+  }
+  $('#settingsPaletteRow').addEventListener('click', openPaletteModal);
+
+  /* ---------------------------------------------------------
      Tab / subnav navigation
   --------------------------------------------------------- */
   function switchTab(tab) {
@@ -477,13 +608,10 @@
         lastDate = t.date;
       }
       const meta = TYPE_META[t.type];
-      const icon = meta.direction === 'in' ? ICON_IN : ICON_OUT;
       const sign = meta.direction === 'in' ? '+' : '-';
       html += '' +
         '<div class="tx-item type-' + t.type + '" data-id="' + t.id + '">' +
-          '<div class="tx-icon">' +
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + icon + '</svg>' +
-          '</div>' +
+          '<div class="tx-icon">' + txIconHtml(t) + '</div>' +
           '<div class="tx-body">' +
             '<div class="tx-category">' + escapeHtml(categoryLabel(t)) + '</div>' +
             '<div class="tx-note">' + escapeHtml(t.note || meta.label) + '</div>' +
@@ -530,11 +658,10 @@
         }
         resultsEl.innerHTML = matches.map(function (t) {
           const meta = TYPE_META[t.type];
-          const icon = meta.direction === 'in' ? ICON_IN : ICON_OUT;
           const sign = meta.direction === 'in' ? '+' : '-';
           return '' +
             '<div class="tx-item type-' + t.type + '" data-id="' + t.id + '">' +
-              '<div class="tx-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + icon + '</svg></div>' +
+              '<div class="tx-icon">' + txIconHtml(t) + '</div>' +
               '<div class="tx-body">' +
                 '<div class="tx-category">' + escapeHtml(categoryLabel(t)) + '</div>' +
                 '<div class="tx-note">' + escapeHtml(t.note || meta.label) + ' · ' + formatDateHuman(t.date) + '</div>' +
@@ -837,7 +964,14 @@
     }
     emptyEl.hidden = true;
 
-    listEl.innerHTML = state.accounts.map(function (a) {
+    const mode = state.settings.accountSortMode;
+    let ordered;
+    if (mode === 'alpha') ordered = state.accounts.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
+    else if (mode === 'recent') ordered = state.accounts.slice().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    else ordered = state.accounts;
+    const isCustom = mode === 'custom';
+
+    listEl.innerHTML = ordered.map(function (a, i) {
       return '' +
         '<div class="account-card" data-id="' + a.id + '">' +
           '<div class="account-emblem">' + escapeHtml(a.name.slice(0, 1).toUpperCase()) + '</div>' +
@@ -845,6 +979,11 @@
             '<div class="account-name">' + escapeHtml(a.name) + '</div>' +
             '<div class="account-balance">' + fmt(a.balance) + '</div>' +
           '</div>' +
+          (isCustom ? '' +
+            '<div class="account-reorder">' +
+              '<button type="button" class="account-reorder-btn" data-dir="-1" data-id="' + a.id + '"' + (i === 0 ? ' disabled' : '') + '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"></path></svg></button>' +
+              '<button type="button" class="account-reorder-btn" data-dir="1" data-id="' + a.id + '"' + (i === ordered.length - 1 ? ' disabled' : '') + '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></button>' +
+            '</div>' : '') +
           '<button type="button" class="account-menu-btn" data-id="' + a.id + '">' +
             '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>' +
           '</button>' +
@@ -857,6 +996,39 @@
         openAccountMenu(getAccount(btn.getAttribute('data-id')));
       });
     });
+    Array.prototype.forEach.call(listEl.querySelectorAll('.account-reorder-btn'), function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        moveAccount(btn.getAttribute('data-id'), Number(btn.getAttribute('data-dir')));
+      });
+    });
+  }
+
+  function moveAccount(id, dir) {
+    const idx = state.accounts.findIndex(function (a) { return a.id === id; });
+    const target = idx + dir;
+    if (idx === -1 || target < 0 || target >= state.accounts.length) return;
+    const tmp = state.accounts[idx];
+    state.accounts[idx] = state.accounts[target];
+    state.accounts[target] = tmp;
+    saveState();
+    renderAccounts();
+  }
+
+  $('#accountsSortBtn').addEventListener('click', function () {
+    const mode = state.settings.accountSortMode;
+    const checkIcon = '<path d="M5 13l4 4L19 7"></path>';
+    const blankIcon = '<circle cx="12" cy="12" r="1"></circle>';
+    openSheet('Sort accounts', [
+      { label: 'Alphabetical', icon: mode === 'alpha' ? checkIcon : blankIcon, onClick: function () { setAccountSort('alpha'); } },
+      { label: 'Last added', icon: mode === 'recent' ? checkIcon : blankIcon, onClick: function () { setAccountSort('recent'); } },
+      { label: 'My own order', icon: mode === 'custom' ? checkIcon : blankIcon, onClick: function () { setAccountSort('custom'); } }
+    ]);
+  });
+  function setAccountSort(mode) {
+    state.settings.accountSortMode = mode;
+    saveState();
+    renderAccounts();
   }
 
   function openAccountMenu(account) {
@@ -903,7 +1075,7 @@
         const name = root.querySelector('#accNameInput').value.trim();
         const balance = parseFloat(root.querySelector('#accBalanceInput').value) || 0;
         if (!name) { showToast('Enter an account name'); return; }
-        state.accounts.push({ id: uid('acc'), name: name, balance: balance });
+        state.accounts.push({ id: uid('acc'), name: name, balance: balance, createdAt: Date.now() });
         saveState();
         closeModal();
         renderAccounts();
@@ -972,15 +1144,37 @@
   function renderProfile() {
     const nameInput = $('#profileNameInput');
     nameInput.value = state.settings.profileName || '';
-    $('#profileAvatar').textContent = (state.settings.profileName || 'W').trim().slice(0, 1).toUpperCase();
+    const avatarBtn = $('#profileAvatarBtn');
+    const initialEl = $('#profileAvatarInitial');
+    const initial = (state.settings.profileName || 'W').trim().slice(0, 1).toUpperCase() || 'W';
+    if (state.settings.profilePhoto) {
+      avatarBtn.style.backgroundImage = 'url(' + JSON.stringify(state.settings.profilePhoto) + ')';
+      initialEl.hidden = true;
+    } else {
+      avatarBtn.style.backgroundImage = '';
+      initialEl.hidden = false;
+      initialEl.textContent = initial;
+    }
     const d = parseISODate(state.settings.memberSince);
     $('#profileMemberSince').textContent = 'Member since ' + d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }
   $('#profileNameInput').addEventListener('input', function (e) {
     state.settings.profileName = e.target.value;
     saveState();
-    $('#profileAvatar').textContent = (e.target.value || 'W').trim().slice(0, 1).toUpperCase() || 'W';
+    if (!state.settings.profilePhoto) {
+      $('#profileAvatarInitial').textContent = (e.target.value || 'W').trim().slice(0, 1).toUpperCase() || 'W';
+    }
   });
+  function openProfilePhotoPicker() {
+    openImagePicker({
+      title: 'Profile picture',
+      currentUrl: state.settings.profilePhoto,
+      onSelect: function (url) { state.settings.profilePhoto = url; saveState(); renderProfile(); },
+      onRemove: state.settings.profilePhoto ? function () { state.settings.profilePhoto = null; saveState(); renderProfile(); } : null
+    });
+  }
+  $('#profileAvatarBtn').addEventListener('click', openProfilePhotoPicker);
+  $('#profileAvatarEditBtn').addEventListener('click', openProfilePhotoPicker);
 
   /* ---------------------------------------------------------
      Categories
@@ -994,17 +1188,22 @@
       return '' +
         '<div class="category-card">' +
           '<div class="category-head" data-id="' + cat.id + '">' +
-            '<span class="category-name">' + escapeHtml(cat.name) + '</span>' +
+            '<div class="category-thumb"' + (cat.icon ? ' style="background-image:url(' + JSON.stringify(cat.icon) + ')"' : '') + '>' + (cat.icon ? '' : escapeHtml(cat.name.slice(0, 1).toUpperCase())) + '</div>' +
+            '<div class="category-head-main"><span class="category-name">' + escapeHtml(cat.name) + '</span></div>' +
             '<div class="category-head-actions">' +
               '<span class="category-count">' + cat.subcategories.length + '</span>' +
-              '<button type="button" class="icon-btn" data-action="edit" data-id="' + cat.id + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path></svg></button>' +
-              '<button type="button" class="icon-btn" data-action="delete" data-id="' + cat.id + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path></svg></button>' +
+              '<button type="button" class="icon-btn" data-action="menu" data-id="' + cat.id + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg></button>' +
               '<svg class="chevron-toggle' + (isOpen ? ' is-open' : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M6 9l6 6 6-6"></path></svg>' +
             '</div>' +
           '</div>' +
           '<div class="subcategory-list' + (isOpen ? ' is-open' : '') + '" data-list-for="' + cat.id + '">' +
             cat.subcategories.map(function (s) {
-              return '<div class="subcategory-row"><span>' + escapeHtml(s.name) + '</span><button type="button" class="icon-btn" data-action="delete-sub" data-cat="' + cat.id + '" data-sub="' + s.id + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>';
+              return '' +
+                '<div class="subcategory-row">' +
+                  '<div class="subcategory-thumb"' + (s.icon ? ' style="background-image:url(' + JSON.stringify(s.icon) + ')"' : '') + '>' + (s.icon ? '' : escapeHtml(s.name.slice(0, 1).toUpperCase())) + '</div>' +
+                  '<span class="subcategory-name">' + escapeHtml(s.name) + '</span>' +
+                  '<button type="button" class="icon-btn" data-action="sub-menu" data-cat="' + cat.id + '" data-sub="' + s.id + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><circle cx="12" cy="5" r="1.3"></circle><circle cx="12" cy="12" r="1.3"></circle><circle cx="12" cy="19" r="1.3"></circle></svg></button>' +
+                '</div>';
             }).join('') +
             '<button type="button" class="add-subcat-btn" data-action="add-sub" data-id="' + cat.id + '">+ Add subcategory</button>' +
           '</div>' +
@@ -1019,36 +1218,18 @@
         renderCategories();
       });
     });
-    Array.prototype.forEach.call(listEl.querySelectorAll('[data-action="edit"]'), function (btn) {
+    Array.prototype.forEach.call(listEl.querySelectorAll('[data-action="menu"]'), function (btn) {
       btn.addEventListener('click', function (e) {
         e.stopPropagation();
-        openRenameCategoryModal(getCategory(btn.getAttribute('data-id')));
+        openCategoryMenu(getCategory(btn.getAttribute('data-id')));
       });
     });
-    Array.prototype.forEach.call(listEl.querySelectorAll('[data-action="delete"]'), function (btn) {
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        const cat = getCategory(btn.getAttribute('data-id'));
-        openConfirm({
-          title: 'Delete ' + cat.name + '?',
-          message: 'Transactions using this category will show as Uncategorized.',
-          confirmLabel: 'Delete', danger: true,
-          onConfirm: function () {
-            state.categories = state.categories.filter(function (c) { return c.id !== cat.id; });
-            saveState();
-            renderCategories();
-            showToast('Category deleted');
-          }
-        });
-      });
-    });
-    Array.prototype.forEach.call(listEl.querySelectorAll('[data-action="delete-sub"]'), function (btn) {
+    Array.prototype.forEach.call(listEl.querySelectorAll('[data-action="sub-menu"]'), function (btn) {
       btn.addEventListener('click', function (e) {
         e.stopPropagation();
         const cat = getCategory(btn.getAttribute('data-cat'));
-        cat.subcategories = cat.subcategories.filter(function (s) { return s.id !== btn.getAttribute('data-sub'); });
-        saveState();
-        renderCategories();
+        const sub = getSubcategory(cat, btn.getAttribute('data-sub'));
+        openSubcategoryMenu(cat, sub);
       });
     });
     Array.prototype.forEach.call(listEl.querySelectorAll('[data-action="add-sub"]'), function (btn) {
@@ -1057,6 +1238,52 @@
         openAddSubcategoryModal(getCategory(btn.getAttribute('data-id')));
       });
     });
+  }
+
+  function openCategoryMenu(cat) {
+    openSheet(cat.name, [
+      {
+        label: 'Change photo', icon: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.4"></circle><path d="M21 16l-5-5-4 4-2-2-5 5"></path>',
+        onClick: function () {
+          openImagePicker({
+            title: cat.name + ' photo', currentUrl: cat.icon,
+            onSelect: function (url) { cat.icon = url; saveState(); renderCategories(); },
+            onRemove: cat.icon ? function () { cat.icon = null; saveState(); renderCategories(); } : null
+          });
+        }
+      },
+      {
+        label: 'Rename', icon: '<path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>',
+        onClick: function () { openRenameCategoryModal(cat); }
+      },
+      {
+        label: 'Delete category', icon: '<path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path>', danger: true,
+        onClick: function () { openDeleteCategoryFlow(cat); }
+      }
+    ]);
+  }
+
+  function openSubcategoryMenu(cat, sub) {
+    openSheet(sub.name, [
+      {
+        label: 'Change photo', icon: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.4"></circle><path d="M21 16l-5-5-4 4-2-2-5 5"></path>',
+        onClick: function () {
+          openImagePicker({
+            title: sub.name + ' photo', currentUrl: sub.icon,
+            onSelect: function (url) { sub.icon = url; saveState(); renderCategories(); },
+            onRemove: sub.icon ? function () { sub.icon = null; saveState(); renderCategories(); } : null
+          });
+        }
+      },
+      {
+        label: 'Rename', icon: '<path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>',
+        onClick: function () { openRenameSubcategoryModal(cat, sub); }
+      },
+      {
+        label: 'Delete subcategory', icon: '<path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path>', danger: true,
+        onClick: function () { openDeleteSubcategoryFlow(cat, sub); }
+      }
+    ]);
   }
 
   $('#addCategoryBtn').addEventListener('click', function () {
@@ -1071,7 +1298,7 @@
       root.querySelector('#newCatSaveBtn').addEventListener('click', function () {
         const name = root.querySelector('#newCatNameInput').value.trim();
         if (!name) { showToast('Enter a category name'); return; }
-        state.categories.push({ id: uid('cat'), name: name, subcategories: [] });
+        state.categories.push({ id: uid('cat'), name: name, icon: null, subcategories: [] });
         saveState();
         closeModal();
         renderCategories();
@@ -1100,6 +1327,26 @@
     });
   }
 
+  function openRenameSubcategoryModal(cat, sub) {
+    const body = '' +
+      '<div><label class="field-label">Subcategory name</label><input class="text-input" id="renameSubInput" value="' + escapeHtml(sub.name) + '"></div>' +
+      '<div class="modal-actions">' +
+        '<button type="button" class="btn btn-secondary" id="renameSubCancelBtn">Cancel</button>' +
+        '<button type="button" class="btn btn-primary" id="renameSubSaveBtn">Save</button>' +
+      '</div>';
+    openModal('Rename subcategory', body, function (root) {
+      root.querySelector('#renameSubCancelBtn').addEventListener('click', closeModal);
+      root.querySelector('#renameSubSaveBtn').addEventListener('click', function () {
+        const name = root.querySelector('#renameSubInput').value.trim();
+        if (!name) return;
+        sub.name = name;
+        saveState();
+        closeModal();
+        renderCategories();
+      });
+    });
+  }
+
   function openAddSubcategoryModal(cat) {
     const body = '' +
       '<div><label class="field-label">Subcategory name</label><input class="text-input" id="newSubNameInput" placeholder="e.g. Groceries"></div>' +
@@ -1112,12 +1359,102 @@
       root.querySelector('#newSubSaveBtn').addEventListener('click', function () {
         const name = root.querySelector('#newSubNameInput').value.trim();
         if (!name) { showToast('Enter a subcategory name'); return; }
-        cat.subcategories.push({ id: uid('sub'), name: name });
+        cat.subcategories.push({ id: uid('sub'), name: name, icon: null });
         saveState();
         openCategoryIds.add(cat.id);
         closeModal();
         renderCategories();
         showToast('Subcategory added');
+      });
+    });
+  }
+
+  // Deleting a category or subcategory that still has transactions attached
+  // offers a chance to move those transactions elsewhere first.
+  function openDeleteCategoryFlow(cat) {
+    const count = state.transactions.filter(function (t) { return t.categoryId === cat.id; }).length;
+    if (count === 0) {
+      openConfirm({
+        title: 'Delete ' + cat.name + '?',
+        message: 'This category has no transactions attached. It will be permanently removed.',
+        confirmLabel: 'Delete', danger: true,
+        onConfirm: function () {
+          state.categories = state.categories.filter(function (c) { return c.id !== cat.id; });
+          saveState();
+          renderCategories();
+          showToast('Category deleted');
+        }
+      });
+      return;
+    }
+    const others = state.categories.filter(function (c) { return c.id !== cat.id; });
+    const body = '' +
+      '<p style="font-size:13.5px;color:var(--text-muted);line-height:1.5;">' + count + ' transaction' + (count === 1 ? '' : 's') + ' use' + (count === 1 ? 's' : '') + ' "' + escapeHtml(cat.name) + '". Move ' + (count === 1 ? 'it' : 'them') + ' to another category, or leave ' + (count === 1 ? 'it' : 'them') + ' uncategorized.</p>' +
+      '<div><label class="field-label">Move to</label><select class="select-input" id="catTransferSelect">' +
+        '<option value="">Leave uncategorized</option>' +
+        others.map(function (c) { return '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="modal-actions">' +
+        '<button type="button" class="btn btn-secondary" id="catDeleteCancelBtn">Cancel</button>' +
+        '<button type="button" class="btn btn-danger" id="catDeleteConfirmBtn">Delete category</button>' +
+      '</div>';
+    openModal('Delete ' + cat.name, body, function (root) {
+      root.querySelector('#catDeleteCancelBtn').addEventListener('click', closeModal);
+      root.querySelector('#catDeleteConfirmBtn').addEventListener('click', function () {
+        const target = root.querySelector('#catTransferSelect').value || null;
+        state.transactions.forEach(function (t) {
+          if (t.categoryId === cat.id) { t.categoryId = target; t.subcategoryId = null; }
+        });
+        state.categories = state.categories.filter(function (c) { return c.id !== cat.id; });
+        saveState();
+        closeModal();
+        renderCategories();
+        renderTransactions();
+        showToast('Category deleted');
+      });
+    });
+  }
+
+  function openDeleteSubcategoryFlow(cat, sub) {
+    const count = state.transactions.filter(function (t) { return t.categoryId === cat.id && t.subcategoryId === sub.id; }).length;
+    if (count === 0) {
+      openConfirm({
+        title: 'Delete ' + sub.name + '?',
+        message: 'This subcategory has no transactions attached. It will be permanently removed.',
+        confirmLabel: 'Delete', danger: true,
+        onConfirm: function () {
+          cat.subcategories = cat.subcategories.filter(function (s) { return s.id !== sub.id; });
+          saveState();
+          renderCategories();
+          showToast('Subcategory deleted');
+        }
+      });
+      return;
+    }
+    const others = cat.subcategories.filter(function (s) { return s.id !== sub.id; });
+    const body = '' +
+      '<p style="font-size:13.5px;color:var(--text-muted);line-height:1.5;">' + count + ' transaction' + (count === 1 ? '' : 's') + ' use' + (count === 1 ? 's' : '') + ' "' + escapeHtml(sub.name) + '". Move ' + (count === 1 ? 'it' : 'them') + ' to another subcategory, or leave ' + (count === 1 ? 'it' : 'them') + ' at just "' + escapeHtml(cat.name) + '".</p>' +
+      '<div><label class="field-label">Move to</label><select class="select-input" id="subTransferSelect">' +
+        '<option value="">No subcategory</option>' +
+        others.map(function (s) { return '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="modal-actions">' +
+        '<button type="button" class="btn btn-secondary" id="subDeleteCancelBtn">Cancel</button>' +
+        '<button type="button" class="btn btn-danger" id="subDeleteConfirmBtn">Delete subcategory</button>' +
+      '</div>';
+    openModal('Delete ' + sub.name, body, function (root) {
+      root.querySelector('#subDeleteCancelBtn').addEventListener('click', closeModal);
+      root.querySelector('#subDeleteConfirmBtn').addEventListener('click', function () {
+        const target = root.querySelector('#subTransferSelect').value || null;
+        state.transactions.forEach(function (t) {
+          if (t.categoryId === cat.id && t.subcategoryId === sub.id) t.subcategoryId = target;
+        });
+        cat.subcategories = cat.subcategories.filter(function (s) { return s.id !== sub.id; });
+        saveState();
+        closeModal();
+        renderCategories();
+        renderTransactions();
+        showToast('Subcategory deleted');
       });
     });
   }
@@ -1140,15 +1477,50 @@
     });
   });
 
+  $('#statsCategoryFilterBtn').addEventListener('click', openStatsCategoryFilterModal);
+
+  function openStatsCategoryFilterModal() {
+    const excluded = state.settings.statsExcludedCategoryIds;
+    const html = '<div class="filter-checklist">' + state.categories.map(function (c) {
+      const checked = excluded.indexOf(c.id) === -1;
+      return '' +
+        '<label class="filter-checklist-row">' +
+          '<input type="checkbox" data-id="' + c.id + '"' + (checked ? ' checked' : '') + '>' +
+          '<span>' + escapeHtml(c.name) + '</span>' +
+        '</label>';
+    }).join('') + '</div>' +
+    '<div class="modal-actions">' +
+      '<button type="button" class="btn btn-secondary" id="statsFilterAllBtn">Select all</button>' +
+      '<button type="button" class="btn btn-primary" id="statsFilterApplyBtn">Apply</button>' +
+    '</div>';
+    openModal('Filter categories', html, function (root) {
+      root.querySelector('#statsFilterAllBtn').addEventListener('click', function () {
+        Array.prototype.forEach.call(root.querySelectorAll('input[type="checkbox"]'), function (cb) { cb.checked = true; });
+      });
+      root.querySelector('#statsFilterApplyBtn').addEventListener('click', function () {
+        const newExcluded = [];
+        Array.prototype.forEach.call(root.querySelectorAll('input[type="checkbox"]'), function (cb) {
+          if (!cb.checked) newExcluded.push(cb.getAttribute('data-id'));
+        });
+        state.settings.statsExcludedCategoryIds = newExcluded;
+        saveState();
+        closeModal();
+        renderStatistics();
+      });
+    });
+  }
+
   function renderStatistics() {
     $('#statsFilterLabel').textContent = rangeLabel(statsFilter.preset, statsFilter.customStart, statsFilter.customEnd);
     const range = computeRange(statsFilter.preset, statsFilter.customStart, statsFilter.customEnd);
+    const excluded = state.settings.statsExcludedCategoryIds;
 
     const sums = {};
     let total = 0;
     state.transactions.forEach(function (t) {
       if (t.type !== statsType) return;
       if (!inRange(t.date, range)) return;
+      if (t.categoryId && excluded.indexOf(t.categoryId) > -1) return;
       const key = t.categoryId || 'none';
       sums[key] = (sums[key] || 0) + t.amount;
       total += t.amount;
@@ -1205,6 +1577,9 @@
   --------------------------------------------------------- */
   function renderSettings() {
     $('#settingsCurrencyValue').textContent = state.settings.currency;
+    const palette = PALETTES.find(function (p) { return p.key === state.settings.paletteKey; }) || PALETTES[0];
+    $('#settingsPaletteValue').textContent = palette.name;
+    $('#settingsPaletteDot').style.background = palette.accent;
   }
   $('#settingsCurrencyRow').addEventListener('click', openCurrencyModal);
   $('#resetDataBtn').addEventListener('click', function () {
@@ -1217,6 +1592,7 @@
         saveState();
         txLimit = 20;
         renderAll();
+        applyPalette(state.settings.paletteKey);
         showToast('All data has been reset');
       }
     });
@@ -1263,6 +1639,7 @@
   }
 
   renderAll();
+  applyPalette(state.settings.paletteKey);
   switchTab('transactions');
 
   /* ---------------------------------------------------------

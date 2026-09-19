@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>WerMny</title>
 <meta name="description" content="A gentle way to track where your money comes and goes.">
-<meta name="theme-color" content="#F7F2EA">
+<meta name="theme-color" content="#F3EEFA">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -82,7 +82,12 @@
     <section id="view-accounts" class="tab-view">
       <div class="section-toolbar">
         <h1 class="section-title">Accounts</h1>
-        <span class="section-sub" id="accountsTotal">₱0.00 total</span>
+        <div class="toolbar-actions">
+          <span class="section-sub" id="accountsTotal">₱0.00 total</span>
+          <button id="accountsSortBtn" class="filter-btn icon-only" type="button" aria-label="Sort accounts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3"></path></svg>
+          </button>
+        </div>
       </div>
 
       <div id="accountsList" class="accounts-list"></div>
@@ -105,7 +110,10 @@
       <!-- Profile -->
       <div id="sub-profile" class="sub-view is-active">
         <div class="profile-card">
-          <div class="profile-avatar" id="profileAvatar">W</div>
+          <button type="button" class="profile-avatar" id="profileAvatarBtn" aria-label="Change profile picture">
+            <span id="profileAvatarInitial">W</span>
+          </button>
+          <button type="button" class="profile-photo-link" id="profileAvatarEditBtn">Change photo</button>
           <div class="profile-field-group">
             <label class="field-label" for="profileNameInput">Display name</label>
             <input id="profileNameInput" class="text-input" type="text" placeholder="Your name" maxlength="40">
@@ -130,10 +138,15 @@
       <div id="sub-statistics" class="sub-view">
         <div class="section-toolbar">
           <h2 class="section-title">Statistics</h2>
-          <button id="statsFilterBtn" class="filter-btn" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>
-            <span id="statsFilterLabel">This month</span>
-          </button>
+          <div class="toolbar-actions">
+            <button id="statsCategoryFilterBtn" class="filter-btn icon-only" type="button" aria-label="Filter categories">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M4 5h16l-6 7.5V19l-4 2v-8.5L4 5z"></path></svg>
+            </button>
+            <button id="statsFilterBtn" class="filter-btn" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>
+              <span id="statsFilterLabel">This month</span>
+            </button>
+          </div>
         </div>
 
         <div class="stats-type-toggle" id="statsTypeToggle">
@@ -158,6 +171,13 @@
           <button class="settings-row" id="settingsCurrencyRow" type="button">
             <span>Default currency</span>
             <span class="settings-row-value" id="settingsCurrencyValue">PHP</span>
+          </button>
+          <button class="settings-row" id="settingsPaletteRow" type="button">
+            <span>Color palette</span>
+            <span class="settings-row-value settings-row-swatch">
+              <span id="settingsPaletteDot" class="palette-dot"></span>
+              <span id="settingsPaletteValue">Light Purple</span>
+            </span>
           </button>
           <button class="settings-row settings-row-danger" id="resetDataBtn" type="button">
             <span>Reset all data</span>
@@ -215,6 +235,9 @@
 
 <!-- Toast -->
 <div id="toast" class="toast" hidden></div>
+
+<!-- Hidden shared file input for image picking (gallery / files) -->
+<input type="file" id="globalImageFileInput" accept="image/*" hidden>
 
 <script src="app.js"></script>
 </body>
