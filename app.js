@@ -46,13 +46,20 @@
     { key: 'mint',      name: 'Mint',         bg: '#EEF8F3', accent: '#8FD9B6', accentDark: '#4F9A72', accentTint: '#DFF3E9' }
   ];
 
+  const EMOJI_CHOICES = [
+    '🍔', '🍕', '🍜', '🍎', '☕', '🍳', '🛒', '🧾',
+    '🚗', '🚌', '⛽', '✈️', '🚕', '🚲', '🏠', '💡',
+    '📱', '👕', '🎬', '🎮', '📚', '🎓', '💊', '🏥',
+    '💰', '💵', '💳', '🏦', '🎁', '🐾', '⚽', '🌱'
+  ];
+
   /* ---------------------------------------------------------
      State
   --------------------------------------------------------- */
   function defaultState() {
     return {
       accounts: [
-        { id: uid('acc'), name: 'Cash', balance: 0, createdAt: Date.now() }
+        { id: uid('acc'), name: 'Cash', balance: 0, createdAt: Date.now(), icon: null, goal: null }
       ],
       transactions: [],
       categories: [
@@ -67,23 +74,39 @@
         memberSince: todayISO(),
         paletteKey: 'lavender',
         accountSortMode: 'custom',
-        statsExcludedCategoryIds: []
+        statsExcludedCategoryIds: [],
+        statsExcludedAccountIds: []
       }
     };
   }
 
   let state = loadState();
 
+  // Older saves stored icons as a plain URL string; the current format is
+  // { kind: 'image'|'emoji', value } so category/subcategory/account/profile
+  // pictures can also be emoji. This normalizes either shape, idempotently.
+  function normalizeIcon(icon) {
+    if (!icon) return null;
+    if (typeof icon === 'string') return { kind: 'image', value: icon };
+    if (icon.kind && icon.value) return icon;
+    return null;
+  }
+
   function migrateState(s) {
-    s.accounts.forEach(function (a, i) { if (!a.createdAt) a.createdAt = Date.now() - (s.accounts.length - i) * 1000; });
-    s.categories.forEach(function (c) {
-      if (c.icon === undefined) c.icon = null;
-      (c.subcategories || []).forEach(function (sub) { if (sub.icon === undefined) sub.icon = null; });
+    s.accounts.forEach(function (a, i) {
+      if (!a.createdAt) a.createdAt = Date.now() - (s.accounts.length - i) * 1000;
+      a.icon = normalizeIcon(a.icon);
+      if (a.goal === undefined) a.goal = null;
     });
-    if (s.settings.profilePhoto === undefined) s.settings.profilePhoto = null;
+    s.categories.forEach(function (c) {
+      c.icon = normalizeIcon(c.icon);
+      (c.subcategories || []).forEach(function (sub) { sub.icon = normalizeIcon(sub.icon); });
+    });
+    s.settings.profilePhoto = normalizeIcon(s.settings.profilePhoto);
     if (!s.settings.paletteKey) s.settings.paletteKey = 'lavender';
     if (!s.settings.accountSortMode) s.settings.accountSortMode = 'custom';
     if (!s.settings.statsExcludedCategoryIds) s.settings.statsExcludedCategoryIds = [];
+    if (!s.settings.statsExcludedAccountIds) s.settings.statsExcludedAccountIds = [];
     return s;
   }
 
@@ -100,7 +123,11 @@
   }
 
   function saveState() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      showToast('Could not save — storage is full. Try a smaller photo.');
+    }
   }
 
   /* ---------------------------------------------------------
@@ -160,14 +187,24 @@
     const sub = tx.subcategoryId ? getSubcategory(cat, tx.subcategoryId) : null;
     return sub ? cat.name + ' · ' + sub.name : cat.name;
   }
+  // Renders the inner HTML of a thumbnail slot for a normalized icon
+  // ({kind:'image'|'emoji', value}) or falls back to a plain letter.
+  function iconThumbHtml(icon, fallbackLetter) {
+    if (icon && icon.kind === 'image') return '<img src="' + escapeHtml(icon.value) + '" alt="">';
+    if (icon && icon.kind === 'emoji') return '<span class="thumb-emoji">' + escapeHtml(icon.value) + '</span>';
+    return escapeHtml(fallbackLetter);
+  }
   function txIconHtml(t) {
     const meta = TYPE_META[t.type];
     const arrow = meta.direction === 'in' ? ICON_IN : ICON_OUT;
     const cat = getCategory(t.categoryId);
     const sub = cat && t.subcategoryId ? getSubcategory(cat, t.subcategoryId) : null;
-    const photo = (sub && sub.icon) || (cat && cat.icon) || null;
-    if (photo) {
-      return '<img class="tx-icon-img" src="' + escapeHtml(photo) + '" alt="">' +
+    const icon = (sub && sub.icon) || (cat && cat.icon) || null;
+    if (icon) {
+      const inner = icon.kind === 'emoji'
+        ? '<span class="thumb-emoji">' + escapeHtml(icon.value) + '</span>'
+        : '<img class="tx-icon-img" src="' + escapeHtml(icon.value) + '" alt="">';
+      return inner +
         '<span class="tx-icon-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">' + arrow + '</svg></span>';
     }
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + arrow + '</svg>';
@@ -377,40 +414,79 @@
   }
 
   /* ---------------------------------------------------------
-     Generic image picker (used by profile / category / subcategory)
+     Generic icon picker (used by profile / category / subcategory / account)
+     Supports a photo from gallery/files (resized client-side to keep
+     localStorage small), a pasted image URL, or an emoji.
   --------------------------------------------------------- */
   const globalImageFileInput = $('#globalImageFileInput');
 
-  function openImagePicker(opts) {
+  function resizeImageFile(file) {
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+      reader.onload = function () {
+        const img = new Image();
+        img.onload = function () {
+          const maxDim = 256;
+          let w = img.width, h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w >= h) { h = Math.round(h * maxDim / w); w = maxDim; }
+            else { w = Math.round(w * maxDim / h); h = maxDim; }
+          }
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL('image/jpeg', 0.82));
+          } catch (e) {
+            resolve(reader.result); // canvas unavailable — fall back to the raw file
+          }
+        };
+        img.onerror = function () { resolve(reader.result); };
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function iconPreviewHtml(icon) {
+    if (icon && icon.kind === 'image') return '<img src="' + escapeHtml(icon.value) + '" alt="">';
+    if (icon && icon.kind === 'emoji') return '<span class="thumb-emoji">' + escapeHtml(icon.value) + '</span>';
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.5"></circle><path d="M21 16l-5-5-4 4-2-2-5 5"></path></svg>';
+  }
+
+  function openIconPicker(opts) {
     const body = '' +
-      '<div class="photo-picker-preview" id="photoPreview">' +
-        (opts.currentUrl ? '' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.5"></circle><path d="M21 16l-5-5-4 4-2-2-5 5"></path></svg>') +
-      '</div>' +
+      '<div class="photo-picker-preview" id="photoPreview">' + iconPreviewHtml(opts.currentIcon) + '</div>' +
       '<div class="photo-picker-actions">' +
         '<button type="button" class="btn btn-secondary" id="photoChooseBtn">Choose from gallery or files</button>' +
-        '<div class="photo-picker-divider">or</div>' +
+        '<div class="photo-picker-divider">or paste a link</div>' +
         '<div class="field-with-add">' +
-          '<input type="text" class="text-input" id="photoUrlInput" placeholder="Paste an image address">' +
+          '<input type="text" class="text-input" id="photoUrlInput" placeholder="Image address">' +
           '<button type="button" class="small-icon-btn" id="photoUrlSaveBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg></button>' +
         '</div>' +
-        (opts.currentUrl ? '<button type="button" class="photo-picker-remove" id="photoRemoveBtn">Remove photo</button>' : '') +
+        '<div class="photo-picker-divider">or pick an emoji</div>' +
+        '<div class="emoji-grid">' + EMOJI_CHOICES.map(function (e) { return '<button type="button" class="emoji-grid-btn" data-emoji="' + e + '">' + e + '</button>'; }).join('') + '</div>' +
+        '<div class="field-with-add">' +
+          '<input type="text" class="text-input" id="photoEmojiInput" placeholder="Or type any emoji" maxlength="4">' +
+          '<button type="button" class="small-icon-btn" id="photoEmojiSaveBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg></button>' +
+        '</div>' +
+        (opts.currentIcon ? '<button type="button" class="photo-picker-remove" id="photoRemoveBtn">Remove</button>' : '') +
       '</div>';
 
-    openModal(opts.title || 'Photo', body, function (root) {
-      const preview = root.querySelector('#photoPreview');
-      if (opts.currentUrl) preview.style.backgroundImage = 'url(' + JSON.stringify(opts.currentUrl) + ')';
-
+    openModal(opts.title || 'Icon', body, function (root) {
       root.querySelector('#photoChooseBtn').addEventListener('click', function () {
         globalImageFileInput.onchange = function () {
           const file = globalImageFileInput.files && globalImageFileInput.files[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = function () {
-            closeModal();
-            opts.onSelect(reader.result);
-          };
-          reader.readAsDataURL(file);
           globalImageFileInput.value = '';
+          if (!file) return;
+          resizeImageFile(file).then(function (dataUrl) {
+            closeModal();
+            opts.onSelect({ kind: 'image', value: dataUrl });
+          }).catch(function () {
+            showToast('Could not read that image');
+          });
         };
         globalImageFileInput.click();
       });
@@ -419,10 +495,23 @@
         const url = root.querySelector('#photoUrlInput').value.trim();
         if (!url) { showToast('Paste an image address first'); return; }
         closeModal();
-        opts.onSelect(url);
+        opts.onSelect({ kind: 'image', value: url });
       });
 
-      if (opts.currentUrl) {
+      Array.prototype.forEach.call(root.querySelectorAll('.emoji-grid-btn'), function (btn) {
+        btn.addEventListener('click', function () {
+          closeModal();
+          opts.onSelect({ kind: 'emoji', value: btn.getAttribute('data-emoji') });
+        });
+      });
+      root.querySelector('#photoEmojiSaveBtn').addEventListener('click', function () {
+        const val = root.querySelector('#photoEmojiInput').value.trim();
+        if (!val) { showToast('Type or paste an emoji first'); return; }
+        closeModal();
+        opts.onSelect({ kind: 'emoji', value: val });
+      });
+
+      if (opts.currentIcon) {
         root.querySelector('#photoRemoveBtn').addEventListener('click', function () {
           closeModal();
           if (opts.onRemove) opts.onRemove();
@@ -951,6 +1040,24 @@
   /* ---------------------------------------------------------
      Accounts tab
   --------------------------------------------------------- */
+  let accountsViewFilter = 'all';
+
+  $('#accountsFilterToggle').addEventListener('click', function (e) {
+    const btn = e.target.closest('.toggle-pill');
+    if (!btn) return;
+    accountsViewFilter = btn.getAttribute('data-filter');
+    Array.prototype.forEach.call($('#accountsFilterToggle').querySelectorAll('.toggle-pill'), function (p) { p.classList.toggle('is-active', p === btn); });
+    renderAccounts();
+  });
+
+  function goalProgress(a) {
+    const target = a.goal.targetAmount;
+    const pct = target > 0 ? Math.max(0, Math.min(100, Math.round((a.balance / target) * 100))) : 0;
+    const left = Math.max(0, target - a.balance);
+    const daysLeft = Math.ceil((parseISODate(a.goal.targetDate) - parseISODate(todayISO())) / 86400000);
+    return { pct: pct, left: left, daysLeft: daysLeft, perDay: daysLeft > 0 ? left / daysLeft : null };
+  }
+
   function renderAccounts() {
     const listEl = $('#accountsList');
     const emptyEl = $('#accountsEmpty');
@@ -962,7 +1069,6 @@
       emptyEl.hidden = false;
       return;
     }
-    emptyEl.hidden = true;
 
     const mode = state.settings.accountSortMode;
     let ordered;
@@ -971,22 +1077,43 @@
     else ordered = state.accounts;
     const isCustom = mode === 'custom';
 
+    if (accountsViewFilter === 'goals') ordered = ordered.filter(function (a) { return a.goal; });
+    else if (accountsViewFilter === 'accounts') ordered = ordered.filter(function (a) { return !a.goal; });
+
+    if (ordered.length === 0) {
+      listEl.innerHTML = '';
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+
     listEl.innerHTML = ordered.map(function (a, i) {
+      const p = a.goal ? goalProgress(a) : null;
       return '' +
         '<div class="account-card" data-id="' + a.id + '">' +
-          '<div class="account-emblem">' + escapeHtml(a.name.slice(0, 1).toUpperCase()) + '</div>' +
-          '<div class="account-info">' +
-            '<div class="account-name">' + escapeHtml(a.name) + '</div>' +
-            '<div class="account-balance">' + fmt(a.balance) + '</div>' +
+          '<div class="account-card-top">' +
+            '<div class="account-emblem">' + iconThumbHtml(a.icon, a.name.slice(0, 1).toUpperCase()) + '</div>' +
+            '<div class="account-info">' +
+              '<div class="account-name-row"><span class="account-name">' + escapeHtml(a.name) + '</span>' + (a.goal ? '<span class="goal-tag">Goal</span>' : '') + '</div>' +
+              '<div class="account-balance">' + fmt(a.balance) + '</div>' +
+            '</div>' +
+            (isCustom ? '' +
+              '<div class="account-reorder">' +
+                '<button type="button" class="account-reorder-btn" data-dir="-1" data-id="' + a.id + '"' + (i === 0 ? ' disabled' : '') + '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"></path></svg></button>' +
+                '<button type="button" class="account-reorder-btn" data-dir="1" data-id="' + a.id + '"' + (i === ordered.length - 1 ? ' disabled' : '') + '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></button>' +
+              '</div>' : '') +
+            '<button type="button" class="account-menu-btn" data-id="' + a.id + '">' +
+              '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>' +
+            '</button>' +
           '</div>' +
-          (isCustom ? '' +
-            '<div class="account-reorder">' +
-              '<button type="button" class="account-reorder-btn" data-dir="-1" data-id="' + a.id + '"' + (i === 0 ? ' disabled' : '') + '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"></path></svg></button>' +
-              '<button type="button" class="account-reorder-btn" data-dir="1" data-id="' + a.id + '"' + (i === ordered.length - 1 ? ' disabled' : '') + '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></button>' +
+          (p ? '' +
+            '<div class="goal-progress">' +
+              '<div class="goal-progress-bar"><div class="goal-progress-fill" style="width:' + p.pct + '%"></div></div>' +
+              '<div class="goal-progress-meta">' +
+                '<span>' + p.pct + '% · ' + fmt(p.left) + ' left</span>' +
+                '<span>' + (p.perDay !== null ? fmt(p.perDay) + '/day' : 'Target date passed') + '</span>' +
+              '</div>' +
             '</div>' : '') +
-          '<button type="button" class="account-menu-btn" data-id="' + a.id + '">' +
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>' +
-          '</button>' +
         '</div>';
     }).join('');
 
@@ -1032,7 +1159,17 @@
   }
 
   function openAccountMenu(account) {
-    openSheet(account.name, [
+    const actions = [
+      {
+        label: 'Change photo', icon: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.4"></circle><path d="M21 16l-5-5-4 4-2-2-5 5"></path>',
+        onClick: function () {
+          openIconPicker({
+            title: account.name + ' icon', currentIcon: account.icon,
+            onSelect: function (icon) { account.icon = icon; saveState(); renderAccounts(); },
+            onRemove: account.icon ? function () { account.icon = null; saveState(); renderAccounts(); } : null
+          });
+        }
+      },
       {
         label: 'Edit name', icon: '<path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>',
         onClick: function () { openEditAccountNameModal(account); }
@@ -1040,25 +1177,84 @@
       {
         label: 'Transfer funds', icon: '<path d="M7 7h11l-3-3"></path><path d="M17 17H6l3 3"></path>',
         onClick: function () { openTransferFundsModal(account); }
-      },
-      {
-        label: 'Delete account', icon: '<path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path>', danger: true,
+      }
+    ];
+    if (account.goal) {
+      actions.push({
+        label: 'Edit goal', icon: '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path>',
+        onClick: function () { openGoalModal(account); }
+      });
+      actions.push({
+        label: 'Remove goal', icon: '<path d="M6 6l12 12M18 6L6 18"></path>',
         onClick: function () {
           openConfirm({
-            title: 'Delete ' + account.name + '?',
-            message: 'This removes the account and every transaction linked to it. This cannot be undone.',
-            confirmLabel: 'Delete', danger: true,
+            title: 'Remove goal?',
+            message: account.name + ' will go back to being a regular account. Its balance is not affected.',
+            confirmLabel: 'Remove goal', danger: true,
             onConfirm: function () {
-              state.transactions = state.transactions.filter(function (t) { return t.accountId !== account.id; });
-              state.accounts = state.accounts.filter(function (a) { return a.id !== account.id; });
+              account.goal = null;
+              state.settings.statsExcludedAccountIds = state.settings.statsExcludedAccountIds.filter(function (id) { return id !== account.id; });
               saveState();
-              renderAccounts(); renderTransactions();
-              showToast('Account deleted');
+              renderAccounts();
+              showToast('Goal removed');
             }
           });
         }
+      });
+    } else {
+      actions.push({
+        label: 'Set as goal account', icon: '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path>',
+        onClick: function () { openGoalModal(account); }
+      });
+    }
+    actions.push({
+      label: 'Delete account', icon: '<path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13h10l1-13"></path>', danger: true,
+      onClick: function () {
+        openConfirm({
+          title: 'Delete ' + account.name + '?',
+          message: 'This removes the account and every transaction linked to it. This cannot be undone.',
+          confirmLabel: 'Delete', danger: true,
+          onConfirm: function () {
+            state.transactions = state.transactions.filter(function (t) { return t.accountId !== account.id; });
+            state.accounts = state.accounts.filter(function (a) { return a.id !== account.id; });
+            state.settings.statsExcludedAccountIds = state.settings.statsExcludedAccountIds.filter(function (id) { return id !== account.id; });
+            saveState();
+            renderAccounts(); renderTransactions();
+            showToast('Account deleted');
+          }
+        });
       }
-    ]);
+    });
+    openSheet(account.name, actions);
+  }
+
+  function openGoalModal(account) {
+    const existing = account.goal;
+    const body = '' +
+      '<div><label class="field-label">Target amount</label><input type="number" step="0.01" min="0.01" class="text-input" id="goalAmountInput" placeholder="0.00" value="' + (existing ? existing.targetAmount : '') + '"></div>' +
+      '<div><label class="field-label">Target date</label><input type="date" class="text-input" id="goalDateInput" value="' + (existing ? existing.targetDate : '') + '"></div>' +
+      '<div class="modal-actions">' +
+        '<button type="button" class="btn btn-secondary" id="goalCancelBtn">Cancel</button>' +
+        '<button type="button" class="btn btn-primary" id="goalSaveBtn">' + (existing ? 'Save' : 'Set goal') + '</button>' +
+      '</div>';
+    openModal(existing ? 'Edit goal' : 'Set savings goal', body, function (root) {
+      root.querySelector('#goalCancelBtn').addEventListener('click', closeModal);
+      root.querySelector('#goalSaveBtn').addEventListener('click', function () {
+        const amount = parseFloat(root.querySelector('#goalAmountInput').value);
+        const date = root.querySelector('#goalDateInput').value;
+        if (!amount || amount <= 0) { showToast('Enter a valid target amount'); return; }
+        if (!date) { showToast('Choose a target date'); return; }
+        const wasGoal = !!account.goal;
+        account.goal = { targetAmount: amount, targetDate: date };
+        if (!wasGoal && state.settings.statsExcludedAccountIds.indexOf(account.id) === -1) {
+          state.settings.statsExcludedAccountIds.push(account.id);
+        }
+        saveState();
+        closeModal();
+        renderAccounts();
+        showToast(wasGoal ? 'Goal updated' : 'Goal account set');
+      });
+    });
   }
 
   function openAccountModal() {
@@ -1075,7 +1271,7 @@
         const name = root.querySelector('#accNameInput').value.trim();
         const balance = parseFloat(root.querySelector('#accBalanceInput').value) || 0;
         if (!name) { showToast('Enter an account name'); return; }
-        state.accounts.push({ id: uid('acc'), name: name, balance: balance, createdAt: Date.now() });
+        state.accounts.push({ id: uid('acc'), name: name, balance: balance, createdAt: Date.now(), icon: null, goal: null });
         saveState();
         closeModal();
         renderAccounts();
@@ -1145,16 +1341,8 @@
     const nameInput = $('#profileNameInput');
     nameInput.value = state.settings.profileName || '';
     const avatarBtn = $('#profileAvatarBtn');
-    const initialEl = $('#profileAvatarInitial');
     const initial = (state.settings.profileName || 'W').trim().slice(0, 1).toUpperCase() || 'W';
-    if (state.settings.profilePhoto) {
-      avatarBtn.style.backgroundImage = 'url(' + JSON.stringify(state.settings.profilePhoto) + ')';
-      initialEl.hidden = true;
-    } else {
-      avatarBtn.style.backgroundImage = '';
-      initialEl.hidden = false;
-      initialEl.textContent = initial;
-    }
+    avatarBtn.innerHTML = iconThumbHtml(state.settings.profilePhoto, initial);
     const d = parseISODate(state.settings.memberSince);
     $('#profileMemberSince').textContent = 'Member since ' + d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }
@@ -1162,14 +1350,14 @@
     state.settings.profileName = e.target.value;
     saveState();
     if (!state.settings.profilePhoto) {
-      $('#profileAvatarInitial').textContent = (e.target.value || 'W').trim().slice(0, 1).toUpperCase() || 'W';
+      $('#profileAvatarBtn').innerHTML = iconThumbHtml(null, (e.target.value || 'W').trim().slice(0, 1).toUpperCase() || 'W');
     }
   });
   function openProfilePhotoPicker() {
-    openImagePicker({
+    openIconPicker({
       title: 'Profile picture',
-      currentUrl: state.settings.profilePhoto,
-      onSelect: function (url) { state.settings.profilePhoto = url; saveState(); renderProfile(); },
+      currentIcon: state.settings.profilePhoto,
+      onSelect: function (icon) { state.settings.profilePhoto = icon; saveState(); renderProfile(); },
       onRemove: state.settings.profilePhoto ? function () { state.settings.profilePhoto = null; saveState(); renderProfile(); } : null
     });
   }
@@ -1188,7 +1376,7 @@
       return '' +
         '<div class="category-card">' +
           '<div class="category-head" data-id="' + cat.id + '">' +
-            '<div class="category-thumb"' + (cat.icon ? ' style="background-image:url(' + JSON.stringify(cat.icon) + ')"' : '') + '>' + (cat.icon ? '' : escapeHtml(cat.name.slice(0, 1).toUpperCase())) + '</div>' +
+            '<div class="category-thumb">' + iconThumbHtml(cat.icon, cat.name.slice(0, 1).toUpperCase()) + '</div>' +
             '<div class="category-head-main"><span class="category-name">' + escapeHtml(cat.name) + '</span></div>' +
             '<div class="category-head-actions">' +
               '<span class="category-count">' + cat.subcategories.length + '</span>' +
@@ -1200,7 +1388,7 @@
             cat.subcategories.map(function (s) {
               return '' +
                 '<div class="subcategory-row">' +
-                  '<div class="subcategory-thumb"' + (s.icon ? ' style="background-image:url(' + JSON.stringify(s.icon) + ')"' : '') + '>' + (s.icon ? '' : escapeHtml(s.name.slice(0, 1).toUpperCase())) + '</div>' +
+                  '<div class="subcategory-thumb">' + iconThumbHtml(s.icon, s.name.slice(0, 1).toUpperCase()) + '</div>' +
                   '<span class="subcategory-name">' + escapeHtml(s.name) + '</span>' +
                   '<button type="button" class="icon-btn" data-action="sub-menu" data-cat="' + cat.id + '" data-sub="' + s.id + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><circle cx="12" cy="5" r="1.3"></circle><circle cx="12" cy="12" r="1.3"></circle><circle cx="12" cy="19" r="1.3"></circle></svg></button>' +
                 '</div>';
@@ -1245,9 +1433,9 @@
       {
         label: 'Change photo', icon: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.4"></circle><path d="M21 16l-5-5-4 4-2-2-5 5"></path>',
         onClick: function () {
-          openImagePicker({
-            title: cat.name + ' photo', currentUrl: cat.icon,
-            onSelect: function (url) { cat.icon = url; saveState(); renderCategories(); },
+          openIconPicker({
+            title: cat.name + ' icon', currentIcon: cat.icon,
+            onSelect: function (icon) { cat.icon = icon; saveState(); renderCategories(); },
             onRemove: cat.icon ? function () { cat.icon = null; saveState(); renderCategories(); } : null
           });
         }
@@ -1268,9 +1456,9 @@
       {
         label: 'Change photo', icon: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.4"></circle><path d="M21 16l-5-5-4 4-2-2-5 5"></path>',
         onClick: function () {
-          openImagePicker({
-            title: sub.name + ' photo', currentUrl: sub.icon,
-            onSelect: function (url) { sub.icon = url; saveState(); renderCategories(); },
+          openIconPicker({
+            title: sub.name + ' icon', currentIcon: sub.icon,
+            onSelect: function (icon) { sub.icon = icon; saveState(); renderCategories(); },
             onRemove: sub.icon ? function () { sub.icon = null; saveState(); renderCategories(); } : null
           });
         }
@@ -1510,17 +1698,52 @@
     });
   }
 
+  $('#statsAccountFilterBtn').addEventListener('click', openStatsAccountFilterModal);
+
+  function openStatsAccountFilterModal() {
+    const excluded = state.settings.statsExcludedAccountIds;
+    const html = '<div class="filter-checklist">' + state.accounts.map(function (a) {
+      const checked = excluded.indexOf(a.id) === -1;
+      return '' +
+        '<label class="filter-checklist-row">' +
+          '<input type="checkbox" data-id="' + a.id + '"' + (checked ? ' checked' : '') + '>' +
+          '<span>' + escapeHtml(a.name) + (a.goal ? ' (goal)' : '') + '</span>' +
+        '</label>';
+    }).join('') + '</div>' +
+    '<div class="modal-actions">' +
+      '<button type="button" class="btn btn-secondary" id="statsAccountFilterAllBtn">Select all</button>' +
+      '<button type="button" class="btn btn-primary" id="statsAccountFilterApplyBtn">Apply</button>' +
+    '</div>';
+    openModal('Filter wallets', html, function (root) {
+      root.querySelector('#statsAccountFilterAllBtn').addEventListener('click', function () {
+        Array.prototype.forEach.call(root.querySelectorAll('input[type="checkbox"]'), function (cb) { cb.checked = true; });
+      });
+      root.querySelector('#statsAccountFilterApplyBtn').addEventListener('click', function () {
+        const newExcluded = [];
+        Array.prototype.forEach.call(root.querySelectorAll('input[type="checkbox"]'), function (cb) {
+          if (!cb.checked) newExcluded.push(cb.getAttribute('data-id'));
+        });
+        state.settings.statsExcludedAccountIds = newExcluded;
+        saveState();
+        closeModal();
+        renderStatistics();
+      });
+    });
+  }
+
   function renderStatistics() {
     $('#statsFilterLabel').textContent = rangeLabel(statsFilter.preset, statsFilter.customStart, statsFilter.customEnd);
     const range = computeRange(statsFilter.preset, statsFilter.customStart, statsFilter.customEnd);
-    const excluded = state.settings.statsExcludedCategoryIds;
+    const excludedCategories = state.settings.statsExcludedCategoryIds;
+    const excludedAccounts = state.settings.statsExcludedAccountIds;
 
     const sums = {};
     let total = 0;
     state.transactions.forEach(function (t) {
       if (t.type !== statsType) return;
       if (!inRange(t.date, range)) return;
-      if (t.categoryId && excluded.indexOf(t.categoryId) > -1) return;
+      if (t.categoryId && excludedCategories.indexOf(t.categoryId) > -1) return;
+      if (excludedAccounts.indexOf(t.accountId) > -1) return;
       const key = t.categoryId || 'none';
       sums[key] = (sums[key] || 0) + t.amount;
       total += t.amount;
@@ -1582,6 +1805,58 @@
     $('#settingsPaletteDot').style.background = palette.accent;
   }
   $('#settingsCurrencyRow').addEventListener('click', openCurrencyModal);
+
+  $('#settingsExportBtn').addEventListener('click', function () {
+    try {
+      const dataStr = JSON.stringify(state, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'wermny-backup-' + todayISO() + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      showToast('Export downloaded');
+    } catch (e) {
+      showToast('Could not export data');
+    }
+  });
+
+  const importFileInput = $('#importFileInput');
+  $('#settingsImportBtn').addEventListener('click', function () {
+    importFileInput.value = '';
+    importFileInput.click();
+  });
+  importFileInput.addEventListener('change', function () {
+    const file = importFileInput.files && importFileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      let parsed;
+      try { parsed = JSON.parse(reader.result); } catch (e) { showToast('That file is not valid WerMny data'); return; }
+      if (!parsed || !parsed.accounts || !parsed.categories || !parsed.transactions || !parsed.settings) {
+        showToast('That file is not valid WerMny data');
+        return;
+      }
+      openConfirm({
+        title: 'Import data',
+        message: 'This replaces everything currently in WerMny with the contents of this file. This cannot be undone.',
+        confirmLabel: 'Import', danger: true,
+        onConfirm: function () {
+          state = migrateState(parsed);
+          saveState();
+          txLimit = 20;
+          renderAll();
+          applyPalette(state.settings.paletteKey);
+          showToast('Data imported');
+        }
+      });
+    };
+    reader.readAsText(file);
+  });
+
   $('#resetDataBtn').addEventListener('click', function () {
     openConfirm({
       title: 'Reset all data',
